@@ -1,85 +1,41 @@
-const fs = require("fs");
-const puppeteer = require("puppeteer-core");
-const { PendingXHR } = require("pending-xhr-puppeteer");
-const path = require("path");
+const superagent = require("superagent");
+const cheerio = require("cheerio");
 
-const download = require("download-chromium");
-const os = require("os");
-const tmp = os.tmpdir();
-
-const fileName = "well_authorizations_issued.csv";
-
-const url =
-  "https://reports.bcogc.ca/ogc/f?p=AMS_REPORTS:WA_ISSUED:11051318187560:";
-
-const button1 =
-  "#a_Collapsible1_WA_ISSUED_control_panel_content > ul > li:nth-child(1) > span.a-IRR-controls-cell.a-IRR-controls-cell--remove > button";
-
-const button2 =
-  "#a_Collapsible1_WA_ISSUED_control_panel_content > ul > li > span.a-IRR-controls-cell.a-IRR-controls-cell--remove > button";
-
-const button3 = "#WA_ISSUED_actions_button";
-
-const button4 = "#WA_ISSUED_actions_menu_14i";
-
-const button5 = "#WA_ISSUED_download_CSV";
+const url1 = "https://appli.mern.gouv.qc.ca/Infolot/";
+const url2 = "https://appli.mern.gouv.qc.ca/Infolot/Info/Licence";
+const url3 = "https://appli.mern.gouv.qc.ca/Infolot/Info/AccepterLicence";
+const checkUrl =
+  "https://appli.mern.gouv.qc.ca/arcgis_webadaptor_prodc/rest/services/PRODC-E/INFOLOT_ANONYME/MapServer/14";
+const selector = "#LicenceForm > input[type=hidden]";
 
 const app = async () => {
-  let browser;
-  try {
-    console.log("Downloading a browser if needed...");
-    const exec = await download({
-      revision: 694644,
-      installPath: `${tmp}/.local-chromium`
-    });
+  const agent = superagent.agent();
 
-    console.log("Opening a browser...");
-    browser = await puppeteer.launch({
-      executablePath: exec,
-      headless: true
-    });
+  await agent.get(url1);
 
-    console.log("Opening a new page...");
-    const page = await browser.newPage();
-    await page.setCacheEnabled(false);
-    const pendingXHR = new PendingXHR(page);
+  const page = await agent.get(url2);
 
-    console.log(`Going to ${url}...`);
-    await page.goto(url);
+  const hiddenTextExtractor = cheerio.load(page.text);
 
-    await page.click(button1);
-    console.log("Removing the first filter...");
-    await pendingXHR.waitForAllXhrFinished();
+  const hiddenCode = hiddenTextExtractor(selector).get()[0].attribs.value;
 
-    await page.click(button2);
-    console.log("Removing the second filter...");
-    await pendingXHR.waitForAllXhrFinished();
+  await agent
+    .post(url3)
+    .set("Content-Type", "application/x-www-form-urlencoded")
+    .send({ __RequestVerificationToken: hiddenCode, bureau: "bureau" })
+    .ok(res => res.status < 500)
+    .redirects(99);
 
-    await page.click(button3);
-    console.log("Opening Actions...");
-    await pendingXHR.waitForAllXhrFinished();
+  const check = await agent.get(checkUrl);
 
-    await page.click(button4);
-    console.log("Opening Download options...");
-    await pendingXHR.waitForAllXhrFinished();
+  const $ = cheerio
+    .load(check.text)(".rbody")
+    .text()
+    .replace(/(\n)+/g, "\n")
+    .replace(/(\n\t)/g, "\n")
+    .replace(/(" ")/g, " ");
 
-    console.log("Downloading data...");
-    const data = await page.evaluate(async btn => {
-      const link = document.querySelector(btn).href;
-
-      return fetch(link, {
-        method: "GET"
-        // credentials: "include"
-      }).then(res => res.text());
-    }, button5);
-    console.log(`Saving '${fileName}' to '${__dirname}'...`);
-    fs.writeFileSync(path.join(__dirname, fileName), data);
-    console.log("File is saved! All hail the glorious Data, Design and Analytics team!");
-  } catch (error) {
-    console.error(error);
-  } finally {
-    if (browser) browser.close();
-  }
+  console.log($);
 };
 
 app();
